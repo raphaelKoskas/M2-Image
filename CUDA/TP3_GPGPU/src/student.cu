@@ -32,63 +32,97 @@ namespace IMAC
 			dev_partialMax[blockIdx.x]=sharedMemory[0];
 		}
 	}
-
 	__global__
     void maxReduce_ex2(const uint *const dev_array, const uint size, uint *const dev_partialMax)
 	{
 		extern __shared__ uint sharedMemory[];
 		uint idx = blockDim.x * blockIdx.x + threadIdx.x;
 		uint i= blockDim.x >> 1;
-		bool keepGoing = threadIdx.x+1  < i;
+		bool keepGoing = threadIdx.x+1  <= i;
 		sharedMemory[threadIdx.x] = idx < size ? dev_array[idx] : 0;
 		__syncthreads();
 		while (keepGoing){
 			sharedMemory[threadIdx.x ] = umax(sharedMemory[threadIdx.x],sharedMemory[threadIdx.x + i]);
 			i >>= 1;
-			keepGoing = threadIdx.x+1  < i;
+			keepGoing = threadIdx.x+1  <= i;
 			__syncthreads();
-		}
-		if (threadIdx.x==0){
-			dev_partialMax[blockIdx.x]=umax(sharedMemory[threadIdx.x],sharedMemory[threadIdx.x + i]);
-		}
-	}// à optimiser : via des for,  ifs ?
-
-	/*__global__
-    void maxReduce_ex2(const uint *const dev_array, const uint size, uint *const dev_partialMax)
-	{
-		extern __shared__ uint sharedMemory[];
-		uint idx = blockDim.x * blockIdx.x + threadIdx.x, bdm = .5*blockDim.x;
-
-		sharedMemory[threadIdx.x] = idx < size ? dev_array[idx] : 0;
-		__syncthreads();
-
-		while (threadIdx.x +1 <= bdm){
-			sharedMemory[threadIdx.x ] = umax(sharedMemory[threadIdx.x],sharedMemory[threadIdx.x + bdm]);
-			__syncthreads();
-			bdm*=.5;
 		}
 		if (threadIdx.x==0){
 			dev_partialMax[blockIdx.x]=sharedMemory[0];
 		}
 	}
-	//use syncthreads to estimate threadIdx + 1 < i * blockDim.x +i while waiting other threads ?*/
 
-	void maxReduce_ex3(const uint *const dev_array, const uint size, uint *const dev_partialMax)
+	__global__
+    void maxReduce_ex3(const uint *const dev_array, const uint size, uint *const dev_partialMax)
 	{
 		extern __shared__ uint sharedMemory[];
-		uint idx = blockDim.x * blockIdx.x + threadIdx.x;
+		uint idx = blockDim.x * (2*blockIdx.x) + threadIdx.x;
 		uint i= blockDim.x >> 1;
-		bool keepGoing = threadIdx.x+1  < i;
-		sharedMemory[threadIdx.x] = idx < size ? dev_array[idx] : 0;
+		bool keepGoing = threadIdx.x+1  <= i;
+		sharedMemory[threadIdx.x] = idx < size ? umax(dev_array[idx],dev_array[idx+blockDim.x]) : 0;
 		__syncthreads();
 		while (keepGoing){
 			sharedMemory[threadIdx.x ] = umax(sharedMemory[threadIdx.x],sharedMemory[threadIdx.x + i]);
 			i >>= 1;
-			keepGoing = threadIdx.x+1  < i;
+			keepGoing = threadIdx.x+1  <= i;
 			__syncthreads();
 		}
 		if (threadIdx.x==0){
-			dev_partialMax[blockIdx.x]=umax(sharedMemory[threadIdx.x],sharedMemory[threadIdx.x + i]);
+			dev_partialMax[blockIdx.x]=sharedMemory[0];
+		}
+	}
+
+	__global__
+    void maxReduce_ex4(const uint *const dev_array, const uint size, uint *const dev_partialMax)
+	{
+		extern __shared__ uint sharedMemory[];
+		uint idx = blockDim.x * (2*blockIdx.x) + threadIdx.x;
+		uint i= blockDim.x >> 1;
+		bool keepGoing = threadIdx.x+1  <= i;
+		sharedMemory[threadIdx.x] = idx < size ? umax(dev_array[idx],dev_array[idx+blockDim.x]) : 0;
+		__syncthreads();
+		while (keepGoing){
+			sharedMemory[threadIdx.x ] = umax(sharedMemory[threadIdx.x],sharedMemory[threadIdx.x + i]);
+			i >>= 1;
+			if (i<=32) break;
+			keepGoing = threadIdx.x+1  <= i;
+			__syncthreads();
+		}
+		if (threadIdx.x < 32){
+			volatile uint *sharedMem = sharedMemory;
+			if (blockDim.x >= 64) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 32]);
+			if (blockDim.x >= 32) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 16]);
+			if (blockDim.x >= 16) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 8]);
+			if (blockDim.x >= 8) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 4]);
+			if (blockDim.x >= 4) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 2]);
+			if (blockDim.x >= 2) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 1]);
+		}
+		if (threadIdx.x==0){
+			dev_partialMax[blockIdx.x]=sharedMemory[0];
+		}
+	}
+
+	template <unsigned int N>
+	__global__
+    void maxReduce_ex5(const uint *const dev_array, const uint size, uint *const dev_partialMax)
+	{
+		extern __shared__ uint sharedMemory[];
+		uint idx = blockDim.x * (2*blockIdx.x) + threadIdx.x;
+		sharedMemory[threadIdx.x] = idx < size ? umax(dev_array[idx],dev_array[idx+blockDim.x]) : 0;
+		__syncthreads();
+		volatile uint *sharedMem = sharedMemory;
+		if (blockDim.x >= 1024 && threadIdx.x < 512) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 512]);
+		if (blockDim.x >= 512 && threadIdx.x < 256) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 256]);
+		if (blockDim.x >= 256 && threadIdx.x < 128) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 128]);
+		if (blockDim.x >= 128 && threadIdx.x < 64) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 64]);
+		if (blockDim.x >= 64 && threadIdx.x < 32) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 32]);
+		if (blockDim.x >= 32 && threadIdx.x < 16) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 16]);
+		if (blockDim.x >= 16 && threadIdx.x < 8) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 8]);
+		if (blockDim.x >= 8 && threadIdx.x < 4) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 4]);
+		if (blockDim.x >= 4 && threadIdx.x < 2) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 2]);
+		if (blockDim.x >= 2 && threadIdx.x < 1) sharedMem[threadIdx.x] = umax(sharedMem[threadIdx.x],sharedMem[threadIdx.x + 1]);
+		if (threadIdx.x==0){
+			dev_partialMax[blockIdx.x]=sharedMemory[0];
 		}
 	}
 
